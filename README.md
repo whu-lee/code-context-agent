@@ -6,6 +6,10 @@ It indexes code into a local SQLite knowledge graph, then answers code-understan
 
 The project is designed to help AI coding agents such as Claude Code, CodeFlicker, Codex, Cursor, and similar tools understand a repository before editing it.
 
+## Agent Skill
+
+An installable skill prompt is included at [skills/code-context-agent/SKILL.md](skills/code-context-agent/SKILL.md). It tells coding agents when to use the graph, how to discover a Java repository, and which CLI commands to run before reading source code.
+
 ## What Works In v1
 
 - Scans Java, Proto, Maven, Gradle, XML, YAML, and properties files.
