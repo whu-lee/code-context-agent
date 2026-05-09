@@ -1,5 +1,7 @@
 # Code Context Agent
 
+[中文文档](README.zh-CN.md)
+
 Code Context Agent is a lightweight semantic context tool for Java + Protobuf RPC repositories.
 
 It indexes code into a local SQLite knowledge graph, then answers code-understanding questions that are hard to solve with plain text search: symbol lookup, class context, callers, callees, inheritance, Proto RPC contracts, and impact analysis.
