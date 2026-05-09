@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+dist/
+build/
+
+# Local environments
+.venv/
+venv/
+.env
+.env.*
+
+# IDE / OS
+.idea/
+.DS_Store
+
+# Local graph stores and logs
+.codeflicker/
+*.sqlite
+*.sqlite3
+*.db
+*.log
+
+# Local notes / experiments
+agent MVP.md
+dzsk_membrane_results.txt
