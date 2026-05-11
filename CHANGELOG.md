@@ -1,5 +1,12 @@
 # Changelog
 
+## Unreleased
+
+### Improved
+
+- Enhanced `find-callers` reverse tracing with exact signature, wildcard `#method(*)`, signature-prefix, unresolved-call, and implementation/subclass target strategies.
+- Added caller match metadata so agents can distinguish high-confidence graph facts from low-confidence fallback candidates.
+
 ## v1.0.0
 
 Initial GitHub release of Code Context Agent.

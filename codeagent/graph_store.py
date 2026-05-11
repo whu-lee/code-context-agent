@@ -151,6 +151,11 @@ class GraphStore:
             return list(self.conn.execute("select * from edges where to_qn = ? and type = ?", (qualified_name, edge_type)))
         return list(self.conn.execute("select * from edges where to_qn = ?", (qualified_name,)))
 
+    def in_edges_like(self, to_qn_pattern: str, edge_type: str | None = None) -> list[sqlite3.Row]:
+        if edge_type:
+            return list(self.conn.execute("select * from edges where to_qn like ? and type = ?", (to_qn_pattern, edge_type)))
+        return list(self.conn.execute("select * from edges where to_qn like ?", (to_qn_pattern,)))
+
     def stats(self) -> dict[str, int]:
         return {
             "files": self.conn.execute("select count(*) from files").fetchone()[0],

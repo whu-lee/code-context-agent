@@ -143,18 +143,16 @@ class AnalysisEngine:
 
     def find_callers(self, symbol: str, limit: int = 50) -> dict:
         hits = self.store.find_nodes(symbol, ("JavaMethod", "JavaClass", "JavaInterface", "JavaEnum"))
-        targets = self._callable_qns(hits)
-
-        class_like_hit = any(hit["type"] in {"JavaClass", "JavaInterface", "JavaEnum"} for hit in hits)
-        if not class_like_hit:
-            unresolved_names = {symbol}
-            for hit in hits:
-                if hit["type"] == "JavaMethod":
-                    unresolved_names.add(hit["name"])
-            for name in unresolved_names:
-                targets.append(f"unresolved-call:{_method_name(name)}")
-
-        return {"symbol": symbol, "matches": [_row(item) for item in hits[:10]], "callers": self._callers_of(targets, limit)}
+        method_hint = _method_name(symbol)
+        method_hits = self.store.find_nodes(method_hint, ("JavaMethod",)) if method_hint != symbol or "#" in symbol else []
+        hits = _merge_node_rows(hits, _filter_method_hits(symbol, method_hits))
+        targets = self._caller_targets(symbol, hits)
+        return {
+            "symbol": symbol,
+            "matches": [_row(item) for item in hits[:10]],
+            "targets": targets[:20],
+            "callers": self._callers_by_targets(targets, limit),
+        }
 
     def find_callees(self, symbol: str, limit: int = 50) -> dict:
         hits = self.store.find_nodes(symbol, ("JavaMethod", "JavaClass", "JavaInterface", "JavaEnum"))
@@ -206,15 +204,67 @@ class AnalysisEngine:
         return _dedupe_values(qns)
 
     def _callers_of(self, target_qns: list[str], limit: int) -> list[dict]:
+        targets = []
+        for qn in target_qns:
+            if "#" in qn:
+                targets.extend(_method_target_specs(qn, "matched-symbol"))
+            else:
+                targets.append({"strategy": "exact", "target": qn, "confidence": 0.8, "source": "matched-symbol"})
+        return self._callers_by_targets(targets, limit)
+
+    def _callers_by_targets(self, targets: list[dict], limit: int) -> list[dict]:
         rows = []
-        for qn in _dedupe_values(target_qns):
-            for edge in self.store.in_edges(qn, "CALLS"):
+        for target in _dedupe_target_specs(targets):
+            pattern = target["target"]
+            if target["strategy"] == "like":
+                edges = self.store.in_edges_like(pattern, "CALLS")
+            else:
+                edges = self.store.in_edges(pattern, "CALLS")
+            for edge in edges:
                 caller = self.store.get_node(edge["from_qn"])
                 rows.append({
+                    "match": target,
                     "edge": _edge_row(edge),
                     "caller": _row(caller) if caller else {"qualified_name": edge["from_qn"]},
                 })
         return _dedupe_edge_rows(rows, "caller")[:limit]
+
+    def _caller_targets(self, symbol: str, hits) -> list[dict]:
+        method_name = _method_name(symbol)
+        targets: list[dict] = []
+        callable_qns = self._callable_qns(hits)
+
+        for qn in callable_qns:
+            targets.extend(_method_target_specs(qn, "matched-symbol"))
+            if "#" in qn:
+                class_qn, member = qn.split("#", 1)
+                sibling_targets = self._implementation_method_qns(class_qn, _method_name(member))
+                for sibling_qn in sibling_targets:
+                    targets.extend(_method_target_specs(sibling_qn, "implementation-or-subclass"))
+
+        if "#" in symbol or method_name != symbol:
+            targets.append({
+                "strategy": "exact",
+                "target": f"unresolved-call:{method_name}",
+                "confidence": 0.35,
+                "source": "unresolved-method-name",
+            })
+
+        return _dedupe_target_specs(targets)
+
+    def _implementation_method_qns(self, class_qn: str, method_name: str) -> list[str]:
+        qns: list[str] = []
+        related_classes = []
+        for edge_type in ("EXTENDS", "IMPLEMENTS"):
+            for edge in self.store.in_edges(class_qn, edge_type):
+                related_classes.append(edge["from_qn"])
+
+        for related_qn in _dedupe_values(related_classes):
+            for edge in self.store.out_edges(related_qn, "CONTAINS"):
+                member = self.store.get_node(edge["to_qn"])
+                if member and member["type"] == "JavaMethod" and member["name"] == method_name:
+                    qns.append(member["qualified_name"])
+        return _dedupe_values(qns)
 
     def _calls_from(self, source_qns: list[str], limit: int) -> list[dict]:
         rows = []
@@ -299,6 +349,54 @@ def _dedupe_edge_rows(rows: list[dict], node_key: str) -> list[dict]:
             seen.add(key)
             result.append(item)
     return result
+
+
+def _dedupe_target_specs(targets: list[dict]) -> list[dict]:
+    seen: set[tuple[str, str]] = set()
+    result = []
+    for target in targets:
+        strategy = target.get("strategy") or "exact"
+        value = target.get("target")
+        if not value:
+            continue
+        key = (strategy, value)
+        if key not in seen:
+            seen.add(key)
+            result.append(target)
+    return result
+
+
+def _merge_node_rows(left, right) -> list:
+    seen: set[str] = set()
+    result = []
+    for row in list(left) + list(right):
+        qn = row["qualified_name"]
+        if qn not in seen:
+            seen.add(qn)
+            result.append(row)
+    return result
+
+
+def _filter_method_hits(symbol: str, method_hits) -> list:
+    if "#" not in symbol:
+        return list(method_hits)
+    class_part = symbol.split("#", 1)[0].split(".")[-1]
+    if not class_part:
+        return list(method_hits)
+    return [row for row in method_hits if f".{class_part}#" in row["qualified_name"] or row["qualified_name"].split("#", 1)[0].endswith(f".{class_part}")]
+
+
+def _method_target_specs(method_qn: str, source: str) -> list[dict]:
+    if "#" not in method_qn:
+        return [{"strategy": "exact", "target": method_qn, "confidence": 0.75, "source": source}]
+
+    class_qn, member = method_qn.split("#", 1)
+    method_name = _method_name(member)
+    return [
+        {"strategy": "exact", "target": method_qn, "confidence": 0.9, "source": source},
+        {"strategy": "exact", "target": f"{class_qn}#{method_name}(*)", "confidence": 0.65, "source": "wildcard-call-target"},
+        {"strategy": "like", "target": f"{class_qn}#{method_name}(%", "confidence": 0.7, "source": "signature-prefix"},
+    ]
 
 
 def _method_name(value: str) -> str:
